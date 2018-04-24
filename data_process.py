@@ -4,18 +4,22 @@ import json
 
 
 def process_tokens(token_folder_name):
-    tokens = defaultdict(list)
+    tokens_by_doc = defaultdict(list)
+    tokens_by_sent = list()
+    labels_by_sent = list()
     for file_ in os.listdir(token_folder_name):
         with open(os.path.join(token_folder_name, file_), encoding='utf-8') as f:
-            tokens[file_[:-7]] = list()
+            tokens_by_doc[file_[:-7]] = list()
             f = f.readlines()
             sent = list()
             for line in f:
                 if line.split():
                     sent.append(line.split())
                 else:
-                    tokens[file_[:-7]].append(sent)
-    return tokens
+                    tokens_by_doc[file_[:-7]].append(sent)
+                    tokens_by_sent.append([s[0] for s in sent])
+                    labels_by_sent.append([s[-1] for s in sent])
+    return tokens_by_doc, tokens_by_sent, labels_by_sent
 
 
 def process_annotations(annotations_folder_name):

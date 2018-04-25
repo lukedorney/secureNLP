@@ -1,6 +1,7 @@
 import os
 from collections import defaultdict
-import json
+from spacy import tokens, load
+import umsgpack
 
 
 def process_tokens(token_folder_name):
@@ -8,7 +9,7 @@ def process_tokens(token_folder_name):
     tokens_by_sent = list()
     labels_by_sent = list()
     for file_ in os.listdir(token_folder_name):
-        with open(os.path.join(token_folder_name, file_), encoding='utf-8') as f:
+        with open(os.path.join(token_folder_name, file_), 'r', encoding='utf-8') as f:
             tokens_by_doc[file_[:-7]] = list()
             f = f.readlines()
             sent = list()
@@ -50,14 +51,45 @@ def process_plaintext(plaintext_folder_name):
             plaintext[file_[:-8]] = f
     return plaintext
 
+
+def prevent_sentence_boundary_detection(doc):
+    for token in doc:
+        token.is_sent_start = False
+    return doc
+
+
+def add_features(tokens_by_sent, model_name, out_name):
+    nlp = load(model_name, disable=['ner'])
+    nlp.add_pipe(prevent_sentence_boundary_detection, name='prevent-sbd', before='parser')
+
+    with open(out_name, 'wb') as f:
+        sents = []
+        for s in tokens_by_sent:
+            sent = tokens.Doc(nlp.vocab, words=s)
+            nlp.tagger(sent)
+            nlp.parser(sent)
+            sents.append(
+                ["\t".join([token.text, token.pos_, token.tag_, token.dep_, str(token.vector_norm), str(token.cluster),
+                 str(token.is_oov), str(token.is_stop), token.head.text, token.head.pos_])
+                 for token in sent])
+        umsgpack.pack(sents, f)
+
+
 def main():
     folder_name = os.path.join('training_material', 'data')
     token_folder_name = os.path.join(folder_name, 'tokenized')
-    annotations_folder_name = os.path.join(folder_name, 'annotations')
-    plaintext_folder_name = os.path.join(folder_name, 'plaintext')
-    tokens = process_tokens(token_folder_name)
-    '''with open('training_tokens.json', 'w') as token_file:
-        token_file.write(json.dump(tokens, token_file))'''
+    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name)
+    add_features(tokens_by_sent, 'en_core_web_lg', 'train_output.msgpack')
+    print('processed training')
+
+    folder_name = os.path.join('dev', 'dev_source')
+    token_folder_name = os.path.join(folder_name, 'tokenized')
+    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name)
+    add_features(tokens_by_sent, 'en_core_web_lg', 'dev_output.msgpack')
+    print('processed dev')
+
+    # annotations_folder_name = os.path.join(folder_name, 'annotations')
+    # plaintext_folder_name = os.path.join(folder_name, 'plaintext')
     # annotations = process_annotations(annotations_folder_name)
     # plaintext = process_plaintext(plaintext_folder_name)
 

@@ -2,9 +2,13 @@ import os
 from collections import defaultdict
 from spacy import tokens, load
 import umsgpack
+from numpy.random import uniform
+from nltk.tokenize.moses import MosesDetokenizer
 
 
-def process_tokens(token_folder_name):
+def process_tokens(token_folder_name, sent_classification=False):
+    if sent_classification:
+        m = MosesDetokenizer()
     tokens_by_doc = defaultdict(list)
     tokens_by_sent = list()
     labels_by_sent = list()
@@ -13,13 +17,25 @@ def process_tokens(token_folder_name):
             tokens_by_doc[file_[:-7]] = list()
             f = f.readlines()
             sent = list()
-            for line in f:
-                if line.split():
-                    sent.append(line.split())
-                else:
-                    tokens_by_doc[file_[:-7]].append(sent)
-                    tokens_by_sent.append([s[0] for s in sent])
-                    labels_by_sent.append([s[-1] for s in sent])
+            if not sent_classification:
+                for line in f:
+                    if line.split():
+                        sent.append(line.split())
+                    else:
+                        tokens_by_doc[file_[:-7]].append(sent)
+                        tokens_by_sent.append([s[0] for s in sent])
+                        labels_by_sent.append([s[-1] for s in sent])
+                        sent = list()
+            else:
+                sent_labels = list()
+                for line in f:
+                    if line.split():
+                        sent.append(line.split())
+                    else:
+                        tokens_by_doc[file_[:-7]].append(sent)
+                        tokens_by_sent.append(m.detokenize(tokens=[s[0] for s in sent], return_str=True))
+                        labels_by_sent.append(0 if all(label[-1] == 'O' for label in sent) else 1)
+                        sent = list()
     return tokens_by_doc, tokens_by_sent, labels_by_sent
 
 
@@ -74,18 +90,33 @@ def add_features(tokens_by_sent, model_name, out_name):
                  for token in sent])
         umsgpack.pack(sents, f)
 
+def add_vecs(tokens_by_sent, model_name, out_name, sent_classification=False):
+    nlp = load(model_name)
+    vecs = []
+    with open('vec_' + out_name, 'wb') as v:
+        if not sent_classification:
+            for s in tokens_by_sent:
+                sent = tokens.Doc(nlp.vocab, words=s)
+                vecs.append(['\t'.join([str(val) for val in token.vector]) if not sum(token.vector) == 0.0 else '\t'.join([str(val) for val in uniform(-1, 1, 300)]) for token in sent])
+        else:
+            for s in tokens_by_sent:
+                vecs.append('\t'.join([str(val) for val in nlp(s).vector]))
+
+        umsgpack.pack(vecs, v)
 
 def main():
     folder_name = os.path.join('training_material', 'data')
     token_folder_name = os.path.join(folder_name, 'tokenized')
-    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name)
-    add_features(tokens_by_sent, 'en_core_web_lg', 'train_output.msgpack')
+    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name, sent_classification=True)
+    add_vecs(tokens_by_sent, 'en_core_web_lg', 'sent_vec_train_output.msgpack', sent_classification=True)
+    #add_features(tokens_by_sent, 'en_core_web_lg', 'train_output.msgpack')
     print('processed training')
 
     folder_name = os.path.join('dev', 'dev_source')
     token_folder_name = os.path.join(folder_name, 'tokenized')
-    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name)
-    add_features(tokens_by_sent, 'en_core_web_lg', 'dev_output.msgpack')
+    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name, sent_classification=True)
+    #add_vecs(tokens_by_sent, 'en_core_web_lg', 'sent_vec_dev_output.msgpack', sent_classification=True)
+    #add_features(tokens_by_sent, 'en_core_web_lg', 'dev_output.msgpack')
     print('processed dev')
 
     # annotations_folder_name = os.path.join(folder_name, 'annotations')

@@ -109,21 +109,23 @@ def main():
     token_folder_name = os.path.join(folder_name, 'tokenized')
     tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name, sent_classification=True)
     add_vecs(tokens_by_sent, 'en_core_web_lg', 'sent_vec_train_output.msgpack', sent_classification=True)
-    #add_features(tokens_by_sent, 'en_core_web_lg', 'train_output.msgpack')
+    add_features(tokens_by_sent, 'en_core_web_lg', 'train_output.msgpack')
     print('processed training')
 
     folder_name = os.path.join('dev', 'dev_source')
     token_folder_name = os.path.join(folder_name, 'tokenized')
     tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(token_folder_name, sent_classification=True)
-    #add_vecs(tokens_by_sent, 'en_core_web_lg', 'sent_vec_dev_output.msgpack', sent_classification=True)
-    #add_features(tokens_by_sent, 'en_core_web_lg', 'dev_output.msgpack')
+    add_vecs(tokens_by_sent, 'en_core_web_lg', 'sent_vec_dev_output.msgpack', sent_classification=True)
+    add_features(tokens_by_sent, 'en_core_web_lg', 'dev_output.msgpack')
     print('processed dev')
 
-    # annotations_folder_name = os.path.join(folder_name, 'annotations')
-    # plaintext_folder_name = os.path.join(folder_name, 'plaintext')
-    # annotations = process_annotations(annotations_folder_name)
-    # plaintext = process_plaintext(plaintext_folder_name)
-
+    folder_name = os.path.join('gold', 'gold_source')
+    task_1_token_folder_name = os.path.join(os.path.join(folder_name, 'test_1'),'tokenized')
+    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(task_1_token_folder_name, sent_classification=True)
+    add_vecs(tokens_by_sent, 'en_core_web_lg', 'test_1_sent_vec_train_output.msgpack', sent_classification=True)
+    tokens_by_doc, tokens_by_sent, labels_by_sent = process_tokens(task_1_token_folder_name, sent_classification=False)
+    add_vecs(tokens_by_sent, 'en_core_web_lg', 'test_1_vec_train_output.msgpack', sent_classification=False)
+    add_features(tokens_by_sent, 'en_core_web_lg', 'test_1_output.msgpack')
 
 if __name__ == '__main__':
     main()

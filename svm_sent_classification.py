@@ -1,181 +1,259 @@
-from data_process import process_tokens
-from pathlib import Path
-from sklearn.pipeline import Pipeline
-from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
-from sklearn.naive_bayes import BernoulliNB, MultinomialNB
+import msgpack
+import numpy as np
+# from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
+from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer  # , HashingVectorizer
 from sklearn.linear_model import SGDClassifier
 from sklearn import metrics
-import numpy as np
-from sklearn.model_selection import GridSearchCV, cross_val_score, PredefinedSplit
-from sklearn.ensemble import VotingClassifier
-from sklearn.base import TransformerMixin, BaseEstimator
-from sklearn.metrics import make_scorer
-from sklearn.utils.validation import check_X_y, check_array, check_is_fitted
-from sklearn.utils.multiclass import unique_labels
-import msgpack
-import os
-''''''
-class InfoExtractor(BaseEstimator, TransformerMixin):
-    def __init__(self, loc=0):
-        self.loc = loc
+from sklearn.model_selection import GridSearchCV
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import StandardScaler  # , Normalizer
+from sklearn.svm import SVC
 
-    def fit(self, X=None, y=None):
-        print(X)
-        X = X[self.loc]
-        print(X)
-        X = check_array(X)
-        self.input_shape_ = X.shape
-        return self
-
-    def transform(self, X):
-        check_is_fitted(self, ['input_shape_'])
-        X = X[self.loc]
-        # Input validation
-        X = check_array(X)
-
-        # Check that the input is of the same shape as the one passed
-        # during fit.
-        if X.shape != self.input_shape_:
-            raise ValueError('Shape of input is different from what was seen'
-                             'in `fit`')
-        return X
-''''''
+from config import Config
+from data_process import process_tokens
+from utils import str2float, get_predefined_split
 
 
+def combined_predict(text_clf, vec_clf, train, dev, test, c):
+    """ Makes predictions based on a weight combination of two classifiers a specified segment of the data set.
 
-def main():
-    folder_name = Path('training_material') / 'data'
-    token_folder_name = Path(folder_name) / 'tokenized'
-    _, tokens_by_sent, labels = process_tokens(token_folder_name, sent_classification=True)
+    :param text_clf: classifier trained on text data
+    :param vec_clf: classifier trained on sentence level vectors
+    :param test:
+    :param dev:
+    :param train:
+    :param c: Config object with file locations
+    :return:
+    """
+    train_combined = _combined_predict(text_clf, vec_clf, train)
+    dev_combined = _combined_predict(text_clf, vec_clf, dev)
+    test_combined = _combined_predict(text_clf, vec_clf, test)
+    if c.find_weights:
+        dev_avg, dev_predict, optimal_weight = find_optimal_weight(dev_combined, dev['labels'], c)
+        train_avg = np.average(train_combined, axis=0, weights=[optimal_weight, c.range[-1] - optimal_weight])
+        test_avg = np.average(test_combined, axis=0, weights=[optimal_weight, c.range[-1] - optimal_weight])
+    else:
+        train_avg = np.average(train_combined, axis=0, weights=c.sent_clf_weights)
+        dev_avg = np.average(dev_combined, axis=0, weights=c.sent_clf_weights)
+        test_avg = np.average(test_combined, axis=0, weights=c.sent_clf_weights)
+        dev_predict = np.argmax(dev_avg, axis=1) if c.verbosity else None
 
-    folder_name = Path('dev') / 'dev_source'
-    token_folder_name = Path(folder_name) / 'tokenized'
-    _, dev_tokens_by_sent, dev_labels = process_tokens(token_folder_name, sent_classification=True)
-
-    folder_name = os.path.join('gold', 'gold_source')
-    task_1_token_folder_name = os.path.join(os.path.join(folder_name, 'test_1'), 'tokenized')
-    _, test_tokens_by_sent, test_labels = process_tokens(task_1_token_folder_name, sent_classification=True)
-
-    with open('vec_sent_vec_train_output.msgpack', 'rb') as vec_training:
-        vecs = msgpack.unpack(vec_training)
-    vecs = [[float(v) for v in vec.split()] for vec in vecs]
-
-    with open('vec_sent_vec_dev_output.msgpack', 'rb') as vec_dev:
-        dev_vecs = msgpack.unpack(vec_dev)
-    dev_vecs = [[float(v) for v in vec.split()] for vec in dev_vecs]
-
-    with open('vec_test_1_sent_vec_train_output.msgpack', 'rb') as vec_dev:
-        dev_vecs = msgpack.unpack(vec_dev)
-    test_vecs = [[float(v) for v in vec.split()] for vec in dev_vecs]
-
-    p = train_sent_classifier(tokens_by_sent, labels, parameter_search=False)
-    #v = train_by_doc_vec(vecs, labels, dev_vecs=dev_vecs, dev_labels=dev_labels, parameter_search=False)
-
-    y_pred = p.predict_proba(test_tokens_by_sent)
-    #v_predict = v.predict_proba(dev_vecs)
-
-    #combine = np.asarray([clf.predict_proba(X) for clf, X in zip([p,v], [dev_tokens_by_sent,dev_vecs])])
-    #combine_avg = np.average(combine, axis=0,) # weights=[1.66, 0.33])
-    #y_pred = np.argmax(combine_avg, axis=1)
-    '''with open('sent_predict.msgpack', 'wb') as sent_predict:
-        pred = p.predict_proba(tokens_by_sent)
-        msgpack.pack([prob[0] for prob in pred], sent_predict)
-
-    with open('dev_sent_predict.msgpack', 'wb') as sent_predict:
-        msgpack.pack([prob[0] for prob in y_pred], sent_predict)'''
-    with open('test_sent_predict.msgpack', 'wb') as sent_predict:
-        msgpack.pack([prob[0] for prob in y_pred], sent_predict)
-    '''
-    word_pipe = Pipeline([
-        ('info_extract', InfoExtractor(loc=0)),
-        ('clf', p)
-    ])
-    vec_pipe = ([
-        ('info_extract', InfoExtractor(loc=1)),
-        ('clf', v)
-    ])
-
-    eclf = VotingClassifier(estimators=[('words', word_pipe), ('vecs', vec_pipe)], voting='hard')
-    eclf.fit([tokens_by_sent, vecs],labels)
-    y_pred = eclf.predict((dev_tokens_by_sent, dev_vecs))'''
-    y_pred = p.predict(test_tokens_by_sent)
-    # acc = np.mean(y_pred == dev_labels)
-    # print((str(acc)))
-    print(metrics.f1_score(test_labels,y_pred, pos_label=1))
-    print(metrics.classification_report(test_labels, y_pred))
+    if c.verbosity:
+        test_predict = np.argmax(test_avg, axis=1)
+        print("---Combined classifier---\nDev Results:")
+        print_score(dev['labels'], dev_predict)
+        print("Test Results:")
+        print_score(test['labels'], test_predict)
+    return train_avg, dev_avg, test_avg
 
 
-def train_sent_classifier(tokens_by_sent, labels, parameter_search=False):
-    if not parameter_search:
+def _combined_predict(text_clf, vec_clf, data):
+    """ Helper function for combined classifier prediction.
 
-        p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 1))),
+    :param text_clf: classifier trained on text data
+    :param vec_clf: classifier trained on sentence vectors
+    :param data: a particular subset of the dataset (e.g. training, dev)
+    :return: numpy array containing probabilities from each classifier for each data point
+    """
+    return np.asarray([clf.predict_proba(data) for clf, data in zip([text_clf, vec_clf], [data['text'], data['vecs']])])
+
+
+def dev_test_predict(clf, dev, test, text=True):
+    """ Given a classifier, makes predictions on the dev and test sets
+
+    :param clf: classifier for making predictions
+    :param dev: development set dict
+    :param test: test set dict
+    :param text: whether to use text or vec data
+    """
+    if text:
+        dev_pred = clf.predict(dev['text'])
+        test_pred = clf.predict(test['text'])
+    else:
+        dev_pred = clf.predict(dev['vecs'])
+        test_pred = clf.predict(test['vecs'])
+
+    print('Dev results:')
+    print_score(dev['labels'], dev_pred)
+    print('Test results:')
+    print_score(test['labels'], test_pred)
+
+
+def find_optimal_weight(combined_probs, labels, c):
+    """ Finds optimal weights for combining classifiers
+
+    :param combined_probs: probabilties of data based on text and vector classifiers
+    :param labels: labels for a portion of the data set
+    :param c: Config object that contains parameter settings
+    :return:
+    """
+    weights = list()
+    for w in np.linspace(*c.range, c.num_steps):
+        avg = np.average(combined_probs, axis=0, weights=[w, c.range[-1] - w])
+        predict = np.argmax(avg, axis=1)
+        weights.append((avg, predict, w, metrics.f1_score(labels, predict, pos_label=1)))
+    combine_avg, combine_predict, optimal_weight, score = max(weights, key=lambda x: x[-1])
+    if c.verbosity:
+        print('Optimal weights (dev-based):\nText clf:', optimal_weight, '\nVector clf:', c.range[-1] - optimal_weight)
+    return combine_avg, combine_predict, optimal_weight
+
+
+def get_data(c):
+    """ Retrieves data sets.
+
+    :param c: Config object containing folder and file locations
+    :return: Three data sets, each made of text data, sentence vectors, and labels
+    """
+    train, dev, test = dict(), dict(), dict()
+    _, _, train['text'], train['labels'] = process_tokens(c.training_data_folder)
+    _, _, dev['text'], dev['labels'] = process_tokens(c.dev_data_folder)
+    _, _, test['text'], test['labels'] = process_tokens(c.test_data_folder)
+    train['vecs'], dev['vecs'], test['vecs'] = get_vecs(c)
+    return train, dev, test
+
+
+def get_vecs(c):
+    """ Loads sentence vectors from file
+
+    :param c: Config object containing file locations
+    :return:
+    """
+    vecs = list()
+    for vec_file in [c.training_sent_vecs, c.dev_sent_vecs, c.test_sent_vecs]:
+        with open(vec_file, 'rb') as vec:
+            vec = msgpack.unpack(vec)
+            vecs.append(str2float(vec))
+    return vecs
+
+
+def print_score(true_labels, pred_labels):
+    """ Helper function to print F1 score and precision/recall/f1 chart
+
+    :param true_labels: labels provided in the data set
+    :param pred_labels: labels predicted by a classifier
+    """
+    print(metrics.f1_score(true_labels, pred_labels, pos_label=1))
+    print(metrics.classification_report(true_labels, pred_labels))
+
+
+def train_text_clf(train, dev, c):
+    """ Trains a classifier based on text data
+
+    :param train: training set
+    :param dev: dev set
+    :param c: Config object containing parameters
+    :return: classifier trained on text data
+    """
+    if not c.sent_text_parameter_search:
+        p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2), min_df=6, max_df=.75)),
                       ('tfidf', TfidfTransformer(sublinear_tf=True)),
-                      ('clf', SGDClassifier(warm_start=False, loss='log', penalty='l2', alpha=1e-04, max_iter=10))
-                      # ('clf', BernoulliNB(alpha=1.25))
+                      ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1000))
                       ])
-        p.fit(tokens_by_sent, labels)
+        # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2))),
+        #               ('tfidf', TfidfTransformer(sublinear_tf=True)),
+        #               ('scaler', StandardScaler(copy=False, with_mean=False)),
+        #               # ('svd', TruncatedSVD(n_components=1000)),
+        #               # ('normalizer', Normalizer(copy=False)),
+        #               ('clf', SVC(C=10000, gamma=1e-09, class_weight={1: 15}, cache_size=1000))
+        #               ])
+        # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 1), min_df=3, max_df=.95)),
+        #               ('svd', LatentDirichletAllocation(n_components=30, n_jobs=-1, learning_method='batch', learning_offset=70., max_iter=15)),
+        #               # ('normalizer', Normalizer(copy=False)),
+        #               ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1000))
+        #               ])
+        p.fit(train['text'], train['labels'])
         return p
     else:
+        predefined_split = get_predefined_split(train['text'], dev['text'])
         p = Pipeline([('vect', CountVectorizer()),
-                      ('tfidf', TfidfTransformer()),
-                      ('clf', SGDClassifier('log'))
-                      # ('clf', BernoulliNB(alpha=1.25))
+                      ('tfidf', TfidfTransformer(sublinear_tf=True)),
+                      ('scaler', StandardScaler(copy=False, with_mean=False)),
+                      # ('svd', TruncatedSVD(n_components=1000)),
+                      # ('normalizer', Normalizer(copy=False)),
+                      ('clf', SVC(cache_size=1000))
                       ])
-        parameters = {'vect__ngram_range':[(1,1),(1,2),(2,1),(2,2)],
-                          'tfidf__sublinear_tf':(True, False),
-                          'clf__alpha': (.0001, .0005, .005, .00001, .00005),
-                          #'clf__alpha':(1.0, 1.25, 1.5, 1.75, 2.0),
-                          'clf__penalty': ('elasticnet', 'l2', 'l1'),
-                          #'clf__learning_rate': ('constant', 'optimal'), #, 'invscaling'),
-                          'clf__warm_start': (True, False),
-        }
-
-        gs_clf = GridSearchCV(p, parameters, n_jobs=-1)
-        gs_clf = gs_clf.fit(tokens_by_sent, labels)
+        c_range = np.logspace(-2, 10, 13)
+        gamma_range = np.logspace(-9, 3, 13)
+        parameters = {'vect__ngram_range': [(1, 1), (1, 2)], #, (2, 1), (2, 2)],
+                      # 'tfidf__sublinear_tf': (True, False),
+                      'clf__C': c_range,
+                      'clf__gamma': gamma_range,
+                      'clf__class_weight': ({1: 1}, {1: 5}),
+                      # 'clf__alpha': (.001, .0001, .0005, .005, .00001, .00005),
+                      # 'clf__loss': ('hinge', 'log'),
+                      # 'clf__penalty': ('elasticnet', 'l2', 'l1'),
+                      # 'clf__fit_intercept': (True, False),
+                      }
+        gs_clf = GridSearchCV(p, parameters, cv=predefined_split, scoring='f1', n_jobs=-1)
+        gs_clf = gs_clf.fit(train['text'] + dev['text'], train['labels'] + dev['labels'])
         print(gs_clf.best_score_)
         for param_name in sorted(parameters.keys()):
             print("%s: %r" % (param_name, gs_clf.best_params_[param_name]))
         return gs_clf
 
-def train_by_doc_vec(vecs, labels, dev_vecs=None, dev_labels=None, parameter_search=False):
-    if not parameter_search:
+
+def train_vec_clf(train, dev, c):
+    """ Trains a classifier based on sentence vectors
+
+    :param train: training set
+    :param dev: dev set
+    :param c: Config object containing parameters
+    :return: classifier trained on sentence vectors
+    """
+    if not c.sent_vec_parameter_search:
         v = SGDClassifier(loss='log', penalty='elasticnet', max_iter=1000, l1_ratio=.65)
-        #v = BernoulliNB()
-        v.fit(vecs,labels)
+        v.fit(train['vecs'], train['labels'])
         return v
     else:
-        split_list = np.repeat([-1, 0], [len(vecs), len(dev_vecs)])
+        predefined_split = get_predefined_split(train['vecs'], dev['vecs'])
         p = Pipeline([
-            ('clf', SGDClassifier(penalty='elasticnet', max_iter=1000),)
+            ('clf', SGDClassifier(penalty='elasticnet', max_iter=1000))
         ])
         parameters = {
-            #'clf__alpha': (.0001, .0005, .005, .00001, .00005),
-            #'clf__loss': ('log', 'perceptron'),
-            #'clf__penalty': ('elasticnet', 'l2', 'l1'),
-            #'clf__warm_start': (True, False)
-        'clf__l1_ratio': (.10, .15, .20, .25, .30, .45, .5, .55, .60, .65, .70, .75)
+            # 'clf__alpha': (.0001, .0005, .005, .00001, .00005),
+            # 'clf__loss': ('log', 'perceptron'),
+            # 'clf__penalty': ('elasticnet', 'l2', 'l1'),
+            # 'clf__warm_start': (True, False)
+            'clf__l1_ratio': (.10, .15, .20, .25, .30, .45, .5, .55, .60, .65, .70, .75)
         }
-        '''p = Pipeline([('clf', BernoulliNB())])
-        parameters = {
-            'clf__alpha': (1.0, 1.25, 1.50, 1.75, 2.0)
-        }'''
-        v = list()
-        l = list()
-        v.extend(vecs)
-        v.extend(dev_vecs)
-        l.extend(labels)
-        l.extend(dev_labels)
-        gs_clf = GridSearchCV(p, parameters, scoring='f1', cv=list(PredefinedSplit(test_fold=split_list).split(vecs, labels)), refit=False)
-        gs_clf.fit(v, l)
+        gs_clf = GridSearchCV(p, parameters, scoring='f1', cv=predefined_split, n_jobs=-1)
+        gs_clf = gs_clf.fit(train['vecs'] + dev['vecs'], train['labels'] + dev['labels'])
         print(gs_clf.best_score_)
         for param_name in sorted(parameters.keys()):
             print("%s: %r" % (param_name, gs_clf.best_params_[param_name]))
-        pred = SGDClassifier(penalty='elasticnet', max_iter=1000, l1_ratio=gs_clf.best_params_['clf__l1_ratio'],)
-        pred.fit(vecs, labels)
-        ps = pred.predict(dev_vecs)
-        print(metrics.f1_score(dev_labels, ps, pos_label=1))
-        print(metrics.classification_report(dev_labels, ps))
-        return pred
+        return gs_clf
+
+
+def write_sent_prob(train, dev, test, c):
+    """ Writes a classifiers sentence level prediction probabilities to file to use as feature in NER.
+
+    :param train: predictions for training set if precomputed else training set
+    :param dev: predictions for dev set if precomputed else dev set
+    :param test: predictions for test set if precomputed else test set
+    :param c: Config object with file locations
+    """
+    for predictions, prediction_file in zip([train, dev, test], [c.training_predict, c.dev_predict, c.test_predict]):
+        with open(prediction_file, 'wb') as sent_predict:
+            msgpack.pack(predictions[:, 0], sent_predict)
+
+
+def main():
+    c = Config()
+    train, dev, test = get_data(c)
+    text_clf = train_text_clf(train, dev, c)
+    vec_clf = train_vec_clf(train, dev, c)
+
+    print('---Text classifier---')
+    dev_test_predict(text_clf, dev, test)
+    print('---Vector classifier---')
+    dev_test_predict(vec_clf, dev, test, text=False)
+
+    if c.sent_combine_models:
+        train_prob, dev_prob, test_prob = combined_predict(text_clf, vec_clf, train, dev, test, c)
+    else:
+        train_prob, dev_prob, test_prob = map(text_clf.predict_proba, [train['text'], dev['text'], test['text']])
+    if c.write_probs:
+        write_sent_prob(train_prob, dev_prob, test_prob, c)
 
 
 if __name__ == '__main__':

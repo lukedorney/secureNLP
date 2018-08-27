@@ -1,3 +1,18 @@
+"""Creates classifiers for addressing task 1 of sentence classification.
+
+Expects that data_process.py has already been run.
+This file is capable of creating 2 different types of classifiers, based on the type of data input:
+    (1) Text data, which is vectorized into counts, and usually transformed into tf-idf vectors
+    (2) Sentence level vectors, produced by spacy
+
+For (1), tried a combination of linear sgd methods (logistic regression, linear svm, etc) and non-linear SVM, along with
+different decomposition techniques, although it seems the most successful approach is plain logistic regression.
+For(2), tried different linear approaches, linear svm seems to work best, but considerably underperforms approach (1).
+
+Explored averaging models, but doesn't seem to help as the sentence level vector clfs do not perform well on their own.
+
+Writes probabilities of each data point to file for use by NER crf classifier.
+"""
 import msgpack
 import numpy as np
 # from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
@@ -151,13 +166,15 @@ def train_text_clf(train, dev, c):
                       ])
         # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2))),
         #               ('tfidf', TfidfTransformer(sublinear_tf=True)),
+        #               # svm supposedly works better with scaled data
         #               ('scaler', StandardScaler(copy=False, with_mean=False)),
         #               # ('svd', TruncatedSVD(n_components=1000)),
         #               # ('normalizer', Normalizer(copy=False)),
         #               ('clf', SVC(C=10000, gamma=1e-09, class_weight={1: 15}, cache_size=1000))
         #               ])
         # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 1), min_df=3, max_df=.95)),
-        #               ('svd', LatentDirichletAllocation(n_components=30, n_jobs=-1, learning_method='batch', learning_offset=70., max_iter=15)),
+        #               # lda works on counts -- no tf-idf transformation needed
+        #               ('lda', LatentDirichletAllocation(n_components=30, n_jobs=-1, learning_method='batch', learning_offset=70., max_iter=15)),
         #               # ('normalizer', Normalizer(copy=False)),
         #               ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1000))
         #               ])

@@ -1,3 +1,4 @@
+"""Contains utility functions for different models / data processing."""
 import numpy as np
 from sklearn.model_selection import PredefinedSplit
 

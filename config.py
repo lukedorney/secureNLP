@@ -1,3 +1,4 @@
+"""Allows for creation of Config objects which store file locations and parameters for different models."""
 from pathlib import Path
 from spacy import load
 

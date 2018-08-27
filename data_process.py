@@ -10,7 +10,6 @@ Creates compressed files containing information about sentences' tokens and vect
     feat_XXX.msgpack: linguistic features
     vec_XXX.msgpack: word-level vectors
     sent_vec_XXX.msgpack: sentence-level vectors
-
 """
 import os
 

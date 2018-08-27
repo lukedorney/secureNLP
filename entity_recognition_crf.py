@@ -1,3 +1,12 @@
+"""Creates classifiers for addressing task 2 of named-entity recognition.
+
+Uses sklearn_crfsuite to create a model capable of structured prediction.
+Relies on preprocessed data for features and vectors and on task 1 classification probabilities on the sent level.
+
+Scoring comes in two varieties: 'strict' and 'relaxed' F1 scoring, as put forth in the tasks ACL paper.
+Strict scoring is based on the full tag in the data (i.e. in BIO format) -- e.g. B-Entity, I-Modifier.
+Relaxed scoring is based on the part of the tag following the BIO label -- e.g. Entity, Modifier.
+"""
 from itertools import chain
 import re
 import time

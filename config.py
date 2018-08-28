@@ -8,7 +8,7 @@ class Config:
     def __init__(self, load_models=False):
         if load_models:
             self.vec_model = load('en_core_web_lg')
-            self.feat_model = load('en_core_web_lg', disable=['ner'])
+            self.feat_model = load('en_core_web_lg')
             self.feat_model.add_pipe(self.prevent_sentence_boundary_detection, name='prevent-sbd', before='parser')
 
     def prevent_sentence_boundary_detection(doc):
@@ -51,4 +51,5 @@ class Config:
     write_probs = True
 
     crf_parameter_search = False
-    use_word_vec = True
+    use_word_vec = False
+    use_sent_pred = True

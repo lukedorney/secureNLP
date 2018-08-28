@@ -32,12 +32,14 @@ def add_features(tokens_by_sent, model, data_section):
     with open('feat_{}.msgpack'.format(data_section), 'wb') as f:
         sents = []
         for s in tokens_by_sent:
-            # ensure pre-tokenization boundaries
             sent = tokens.Doc(model.vocab, words=s)
             model.tagger(sent)
             model.parser(sent)
-            sents.append(['\t'.join([token.text, token.pos_, token.tag_, token.dep_, str(token.vector_norm), str(token.cluster),
-                          str(token.is_oov), str(token.is_stop), token.head.text, token.head.pos_]) for token in sent])
+            # print(list(sent.noun_chunks))
+            sents.append(['\t'.join([token.text, token.pos_, token.tag_, token.dep_, str(token.vector_norm),
+                                     str(token.cluster), str(token.is_oov), str(token.is_stop), token.head.text,
+                                     token.head.pos_, token.lemma_, str(token.like_email), str(token.like_url)])
+                          for token in sent])
         msgpack.pack(sents, f)
 
 
@@ -52,7 +54,6 @@ def add_vecs(tokens_by_sent, sent_text, model, output):
     with open('vec_{}.msgpack'.format(output), 'wb') as v:
         vecs = []
         for s in tokens_by_sent:
-            # ensure pre-tokenization boundaries
             sent = tokens.Doc(model.vocab, words=s)
             vecs.append(['\t'.join(map(str, token.vector))
                          if not np.array_equal(token.vector, np.zeros(300))
@@ -72,8 +73,8 @@ def preprocess(folder_name, output, config):
     :param config: object containing data locations
     """
     tokens_by_sent, labels_by_sent, sent_text, sent_label = process_tokens(folder_name)
-    add_vecs(tokens_by_sent, sent_text, config.vec_model, output)
     add_features(tokens_by_sent, config.feat_model, output)
+    add_vecs(tokens_by_sent, sent_text, config.vec_model, output)
 
 
 def process_tokens(token_folder_name):
@@ -110,7 +111,7 @@ def main():
 
     c = Config(load_models=True)
 
-    preprocess(c.train_data_folder, 'train', c)
+    preprocess(c.training_data_folder, 'train', c)
     if c.verbosity:
         print('processed training')
 

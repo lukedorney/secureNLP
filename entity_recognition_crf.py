@@ -38,7 +38,8 @@ def featurize(word_index, word, sent, word_vector, sent_prediction, c):
     :return:
     """
     # word indexes: 0 token.text, 1 token.pos_, 2 token.tag_, 3 token.dep_, 4 str(token.vector_norm),
-    #  5 str(token.cluster), 6 str(token.is_oov), 7 str(token.is_stop), 8 token.head.text, 9 token.head.pos_
+    #  5 str(token.cluster), 6 str(token.is_oov), 7 str(token.is_stop), 8 token.head.text, 9 token.head.pos_,
+    # 10 token.lemma, 11 str(token.like_email), 12 str(token.like_url)
     word = word.split()
 
     features = {'bias': 1.0,
@@ -58,7 +59,10 @@ def featurize(word_index, word, sent, word_vector, sent_prediction, c):
                 # 'oov': bool(word[6]),
                 'is_stop': bool(word[7]),
                 'dep_head': word[8],
-                'dep_head_pos': word[9]
+                'dep_head_pos': word[9],
+                # 'lemma': word[10],
+                # 'email': word[11],
+                # 'url': word[12]
                 }
 
     if word_index > 0:
@@ -75,7 +79,7 @@ def featurize(word_index, word, sent, word_vector, sent_prediction, c):
             # 'prev_word_vector_norm': float(prev_word[4]),
             'prev_word_cluster': prev_word[5],
             # 'prev_word_oov': bool(prev_word[6]),
-            'prev_word_is_stop': bool(prev_word[7])  # ,
+            'prev_word_is_stop': bool(prev_word[7])
             # 'prev_dep_head': prev_word[8]#,
             # 'prev_dep_head_pos': prev_word[9]
         })
@@ -96,19 +100,25 @@ def featurize(word_index, word, sent, word_vector, sent_prediction, c):
             'next_word_vector_norm': float(next_word[4]),
             'next_word_cluster': next_word[5],
             'next_word_oov': bool(next_word[6]),
-            'next_word_is_stop': bool(next_word[7])  # ,
+            'next_word_is_stop': bool(next_word[7]),
             # 'next_dep_head': next_word[8]  # ,
             # 'next_dep_head_pos': next_word[9]
+            'word_dep_comb': next_word[0].lower() + '-' + next_word[3]
         })
     else:
         features['EOS'] = True
-    # features = {}
-    # features['vec'] = list(word_vector)
+
+    # if word_index < len(sent) - 2:
+    #     next_next_word = sent[word_index + 2].split()
+    #     features.update({            # 'next_word.istitle()': next_word[0].istitle(),
+    #         # 'next_dep_head_pos': next_next_word[9]
+    #     })
+
     if c.use_word_vec:
         for i, elem in enumerate(list(word_vector)):
             features['v_' + str(i)] = float(elem)
-
-    features['sent_prediction'] = 1.0 - float(sent_prediction)
+    if c.use_sent_pred:
+        features['sent_prediction'] = 1.0 - float(sent_prediction)
     return features
 
 
@@ -119,13 +129,13 @@ def get_data(c):
     :return: data, labels -- for each of train, dev, test -- and the set of all labels seen in all sets
     """
     train, train_labels, train_label_set = _get_data(c.training_data_folder, c.training_feat, c.training_vecs,
-                                                     c.training_predict)
+                                                     c.training_predict, c)
     if c.verbosity:
         print('processed train')
-    dev, dev_labels, dev_label_set = _get_data(c.dev_data_folder, c.dev_feat, c.dev_vecs, c.dev_predict)
+    dev, dev_labels, dev_label_set = _get_data(c.dev_data_folder, c.dev_feat, c.dev_vecs, c.dev_predict, c)
     if c.verbosity:
         print('processed dev')
-    test, test_labels, test_label_set = _get_data(c.test_data_folder, c.test_feat, c.test_vecs, c.test_predict)
+    test, test_labels, test_label_set = _get_data(c.test_data_folder, c.test_feat, c.test_vecs, c.test_predict, c)
     if c.verbosity:
         print('processed test')
     label_set = set()
@@ -133,7 +143,7 @@ def get_data(c):
     return train, train_labels, dev, dev_labels, test, test_labels, label_set
 
 
-def _get_data(folder, feat, vecs, predict):
+def _get_data(folder, feat, vecs, predict, c):
     """Gets data, labels for a part of the data set
 
     :param folder: location of data (e.g. training data folder)
@@ -152,8 +162,13 @@ def _get_data(folder, feat, vecs, predict):
         vecs = [str2float(vec) for vec in vecs]
     with open(predict, 'rb') as sent_predict:
         sentence_predictions = msgpack.unpack(sent_predict)
-    data = [sent2features(s, vecs[i], sentence_predictions[i]) for i, s in enumerate(tokens)]
+    data = [sent2features(s, vecs[i], sentence_predictions[i], c) for i, s in enumerate(tokens)]
     return data, labels, label_set
+
+
+def is_url(text):
+    # https://gist.github.com/gruber/8891611
+    return True if re.findall('(?:https?:(?:/{1,3}|[a-z0-9%])|[a-z0-9.\-]+[.](?:com|net|org|edu|gov|mil|aero|asia|biz|cat|coop|info|int|jobs|mobi|museum|name|post|pro|tel|travel|xxx|ac|ad|ae|af|ag|ai|al|am|an|ao|aq|ar|as|at|au|aw|ax|az|ba|bb|bd|be|bf|bg|bh|bi|bj|bm|bn|bo|br|bs|bt|bv|bw|by|bz|ca|cc|cd|cf|cg|ch|ci|ck|cl|cm|cn|co|cr|cs|cu|cv|cx|cy|cz|dd|de|dj|dk|dm|do|dz|ec|ee|eg|eh|er|es|et|eu|fi|fj|fk|fm|fo|fr|ga|gb|gd|ge|gf|gg|gh|gi|gl|gm|gn|gp|gq|gr|gs|gt|gu|gw|gy|hk|hm|hn|hr|ht|hu|id|ie|il|im|in|io|iq|ir|is|it|je|jm|jo|jp|ke|kg|kh|ki|km|kn|kp|kr|kw|ky|kz|la|lb|lc|li|lk|lr|ls|lt|lu|lv|ly|ma|mc|md|me|mg|mh|mk|ml|mm|mn|mo|mp|mq|mr|ms|mt|mu|mv|mw|mx|my|mz|na|nc|ne|nf|ng|ni|nl|no|np|nr|nu|nz|om|pa|pe|pf|pg|ph|pk|pl|pm|pn|pr|ps|pt|pw|py|qa|re|ro|rs|ru|rw|sa|sb|sc|sd|se|sg|sh|si|sj|Ja|sk|sl|sm|sn|so|sr|ss|st|su|sv|sx|sy|sz|tc|td|tf|tg|th|tj|tk|tl|tm|tn|to|tp|tr|tt|tv|tw|tz|ua|ug|uk|us|uy|uz|va|vc|ve|vg|vi|vn|vu|wf|ws|ye|yt|yu|za|zm|zw)/)(?:[^\s()<>{}\[\]]+|\([^\s()]*?\([^\s()]+\)[^\s()]*?\)|\([^\s]+?\))+(?:\([^\s()]*?\([^\s()]+\)[^\s()]*?\)|\([^\s]+?\)|[^\s`!()\[\]{};:\'\".,<>?«»“”‘’])|(?:(?<!@)[a-z0-9]+(?:[.\-][a-z0-9]+)*[.](?:com|net|org|edu|gov|mil|aero|asia|biz|cat|coop|info|int|jobs|mobi|museum|name|post|pro|tel|travel|xxx|ac|ad|ae|af|ag|ai|al|am|an|ao|aq|ar|as|at|au|aw|ax|az|ba|bb|bd|be|bf|bg|bh|bi|bj|bm|bn|bo|br|bs|bt|bv|bw|by|bz|ca|cc|cd|cf|cg|ch|ci|ck|cl|cm|cn|co|cr|cs|cu|cv|cx|cy|cz|dd|de|dj|dk|dm|do|dz|ec|ee|eg|eh|er|es|et|eu|fi|fj|fk|fm|fo|fr|ga|gb|gd|ge|gf|gg|gh|gi|gl|gm|gn|gp|gq|gr|gs|gt|gu|gw|gy|hk|hm|hn|hr|ht|hu|id|ie|il|im|in|io|iq|ir|is|it|je|jm|jo|jp|ke|kg|kh|ki|km|kn|kp|kr|kw|ky|kz|la|lb|lc|li|lk|lr|ls|lt|lu|lv|ly|ma|mc|md|me|mg|mh|mk|ml|mm|mn|mo|mp|mq|mr|ms|mt|mu|mv|mw|mx|my|mz|na|nc|ne|nf|ng|ni|nl|no|np|nr|nu|nz|om|pa|pe|pf|pg|ph|pk|pl|pm|pn|pr|ps|pt|pw|py|qa|re|ro|rs|ru|rw|sa|sb|sc|sd|se|sg|sh|si|sj|Ja|sk|sl|sm|sn|so|sr|ss|st|su|sv|sx|sy|sz|tc|td|tf|tg|th|tj|tk|tl|tm|tn|to|tp|tr|tt|tv|tw|tz|ua|ug|uk|us|uy|uz|va|vc|ve|vg|vi|vn|vu|wf|ws|ye|yt|yu|za|zm|zw))', text) else False
 
 
 def print_relaxed_scores(dev_labels, pred_dev, test_labels, pred_test, content_labels, c):

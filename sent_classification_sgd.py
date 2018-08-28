@@ -11,11 +11,14 @@ For(2), tried different linear approaches, linear svm seems to work best, but co
 
 Explored averaging models, but doesn't seem to help as the sentence level vector clfs do not perform well on their own.
 
+XGBoost models tried, can be successful but ultimately unstable (f1 between 47 and 56), but data seems too small
+
 Writes probabilities of each data point to file for use by NER crf classifier.
 """
 import msgpack
 import numpy as np
-# from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
+from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
+from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer  # , HashingVectorizer
 from sklearn.linear_model import SGDClassifier
 from sklearn import metrics
@@ -23,6 +26,7 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler  # , Normalizer
 from sklearn.svm import SVC
+from xgboost import XGBClassifier
 
 from config import Config
 from data_process import process_tokens
@@ -148,7 +152,7 @@ def print_score(true_labels, pred_labels):
     :param pred_labels: labels predicted by a classifier
     """
     print(metrics.f1_score(true_labels, pred_labels, pos_label=1))
-    print(metrics.classification_report(true_labels, pred_labels))
+    print(metrics.classification_report(true_labels, pred_labels, digits=3))
 
 
 def train_text_clf(train, dev, c):
@@ -160,9 +164,17 @@ def train_text_clf(train, dev, c):
     :return: classifier trained on text data
     """
     if not c.sent_text_parameter_search:
-        p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2), min_df=6, max_df=.75)),
+        # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2), min_df=2, max_df=.85)),
+        #               ('tfidf', TfidfTransformer(sublinear_tf=True)),
+        #               ('svd', TruncatedSVD(n_components=300)),
+        #               ('clf', XGBClassifier(n_jobs=-1, learning_rate=0.1, n_estimators=600, max_depth=8,
+        #                                     min_child_weight=0, gamma=0, subsample=0.8, colsample_bytree=0.9))
+        #               ])
+        p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 3), min_df=10, max_df=.9, lowercase=False)),
                       ('tfidf', TfidfTransformer(sublinear_tf=True)),
-                      ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1000))
+                      #('svd', TruncatedSVD(n_components=500)),
+                      ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1900, class_weight={1: .9},
+                                            average=True))
                       ])
         # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2))),
         #               ('tfidf', TfidfTransformer(sublinear_tf=True)),
@@ -174,7 +186,8 @@ def train_text_clf(train, dev, c):
         #               ])
         # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 1), min_df=3, max_df=.95)),
         #               # lda works on counts -- no tf-idf transformation needed
-        #               ('lda', LatentDirichletAllocation(n_components=30, n_jobs=-1, learning_method='batch', learning_offset=70., max_iter=15)),
+        #               ('lda', LatentDirichletAllocation(n_components=30, n_jobs=-1, learning_method='batch',
+        #                                                 learning_offset=70., max_iter=15)),
         #               # ('normalizer', Normalizer(copy=False)),
         #               ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1000))
         #               ])
@@ -182,27 +195,37 @@ def train_text_clf(train, dev, c):
         return p
     else:
         predefined_split = get_predefined_split(train['text'], dev['text'])
-        p = Pipeline([('vect', CountVectorizer()),
+        p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 3), min_df=10, max_df=.9, lowercase=False)),
                       ('tfidf', TfidfTransformer(sublinear_tf=True)),
-                      ('scaler', StandardScaler(copy=False, with_mean=False)),
-                      # ('svd', TruncatedSVD(n_components=1000)),
-                      # ('normalizer', Normalizer(copy=False)),
-                      ('clf', SVC(cache_size=1000))
+                      ('svd', TruncatedSVD()),
+                      ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1900, class_weight={1: .9},
+                                            average=True))
                       ])
-        c_range = np.logspace(-2, 10, 13)
-        gamma_range = np.logspace(-9, 3, 13)
-        parameters = {'vect__ngram_range': [(1, 1), (1, 2)], #, (2, 1), (2, 2)],
-                      # 'tfidf__sublinear_tf': (True, False),
-                      'clf__C': c_range,
-                      'clf__gamma': gamma_range,
-                      'clf__class_weight': ({1: 1}, {1: 5}),
-                      # 'clf__alpha': (.001, .0001, .0005, .005, .00001, .00005),
-                      # 'clf__loss': ('hinge', 'log'),
-                      # 'clf__penalty': ('elasticnet', 'l2', 'l1'),
-                      # 'clf__fit_intercept': (True, False),
+        parameters = {'svd__n_components': [100, 200, 300, 400, 500, 600, 700],
+                      'svd__n_iter': [2, 3, 5, 7, 9, 11, 15]
                       }
+        # c_range = np.logspace(-2, 10, 13)
+        # gamma_range = np.logspace(-9, 3, 13)
+        # parameters = {'vect__ngram_range': [(1, 1), (1, 2)], #, (2, 1), (2, 2)],
+        #               # 'tfidf__sublinear_tf': (True, False),
+        #               'clf__C': c_range,
+        #               'clf__gamma': gamma_range,
+        #               'clf__class_weight': ({1: 1}, {1: 5}),
+        #               # 'clf__alpha': (.001, .0001, .0005, .005, .00001, .00005),
+        #               # 'clf__loss': ('hinge', 'log'),
+        #               # 'clf__penalty': ('elasticnet', 'l2', 'l1'),
+        #               # 'clf__fit_intercept': (True, False),
+        #               }
+        # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2), min_df=2, max_df=.85)),
+        #               ('tfidf', TfidfTransformer(sublinear_tf=True)),
+        #               ('svd', TruncatedSVD(n_components=300)),
+        #               ('clf', XGBClassifier(n_jobs=3, learning_rate=0.1, n_estimators=1000, max_depth=8,
+        #                                     min_child_weight=0, gamma=0, subsample=0.8, colsample_bytree=0.9))
+        #               ])
+        # parameters = {'clf__gamma': [i/10.0 for i in range(0, 5, 1)]}
         gs_clf = GridSearchCV(p, parameters, cv=predefined_split, scoring='f1', n_jobs=-1)
         gs_clf = gs_clf.fit(train['text'] + dev['text'], train['labels'] + dev['labels'])
+        print(gs_clf.cv_results_)
         print(gs_clf.best_score_)
         for param_name in sorted(parameters.keys()):
             print("%s: %r" % (param_name, gs_clf.best_params_[param_name]))

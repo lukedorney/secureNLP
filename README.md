@@ -6,6 +6,8 @@ This project addresses parts one and two of this shared task:
 
 For more information see the [official page](https://competitions.codalab.org/competitions/17262). Access to the data set can also be found through this website (although you do have to contact the administrators)
 
+Results can be seen [here](https://competitions.codalab.org/competitions/17262#results). 
+As of 9/5/2018, (compared to scores from the evaluation period) highest score for Subtask 2 relaxed score, 3rd place in Subtask 1, and 4th place for Subtask 2 strict score
 ***
 To run this project:
    1. Obtain the data set

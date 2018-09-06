@@ -15,7 +15,6 @@ XGBoost models tried, can be successful but ultimately unstable (f1 between 47 a
 
 Writes probabilities of each data point to file for use by NER crf classifier.
 """
-import msgpack
 import numpy as np
 from sklearn.decomposition import TruncatedSVD, LatentDirichletAllocation
 from sklearn.ensemble import RandomForestClassifier
@@ -23,41 +22,42 @@ from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer  #
 from sklearn.linear_model import SGDClassifier
 from sklearn import metrics
 from sklearn.model_selection import GridSearchCV
-from sklearn.pipeline import Pipeline
+from sklearn.pipeline import Pipeline, FeatureUnion
 from sklearn.preprocessing import StandardScaler  # , Normalizer
 from sklearn.svm import SVC
 from xgboost import XGBClassifier
 
 from config import Config
-from data_process import process_tokens
-from utils import str2float, get_predefined_split
+from utils import str2float, get_predefined_split, read_msgpack, write_msgpack
 
 
-def combined_predict(text_clf, vec_clf, train, dev, test, c):
+CONFIG = Config()
+
+
+def combined_predict(text_clf, vec_clf, train, dev, test):
     """ Makes predictions based on a weight combination of two classifiers a specified segment of the data set.
 
     :param text_clf: classifier trained on text data
     :param vec_clf: classifier trained on sentence level vectors
-    :param test:
-    :param dev:
-    :param train:
-    :param c: Config object with file locations
-    :return:
+    :param train: training text and vector data
+    :param dev: dev text and vector data
+    :param test: test text and vector data
+    :return: combined probabilities for test, dev, and test sets
     """
     train_combined = _combined_predict(text_clf, vec_clf, train)
     dev_combined = _combined_predict(text_clf, vec_clf, dev)
     test_combined = _combined_predict(text_clf, vec_clf, test)
-    if c.find_weights:
-        dev_avg, dev_predict, optimal_weight = find_optimal_weight(dev_combined, dev['labels'], c)
-        train_avg = np.average(train_combined, axis=0, weights=[optimal_weight, c.range[-1] - optimal_weight])
-        test_avg = np.average(test_combined, axis=0, weights=[optimal_weight, c.range[-1] - optimal_weight])
+    if CONFIG.find_weights:
+        dev_avg, dev_predict, optimal_weight = find_optimal_weight(dev_combined, dev['labels'])
+        train_avg = np.average(train_combined, axis=0, weights=[optimal_weight, CONFIG.range[-1] - optimal_weight])
+        test_avg = np.average(test_combined, axis=0, weights=[optimal_weight, CONFIG.range[-1] - optimal_weight])
     else:
-        train_avg = np.average(train_combined, axis=0, weights=c.sent_clf_weights)
-        dev_avg = np.average(dev_combined, axis=0, weights=c.sent_clf_weights)
-        test_avg = np.average(test_combined, axis=0, weights=c.sent_clf_weights)
-        dev_predict = np.argmax(dev_avg, axis=1) if c.verbosity else None
+        train_avg = np.average(train_combined, axis=0, weights=CONFIG.sent_clf_weights)
+        dev_avg = np.average(dev_combined, axis=0, weights=CONFIG.sent_clf_weights)
+        test_avg = np.average(test_combined, axis=0, weights=CONFIG.sent_clf_weights)
+        dev_predict = np.argmax(dev_avg, axis=1) if CONFIG.verbose else None
 
-    if c.verbosity:
+    if CONFIG.verbose:
         test_predict = np.argmax(test_avg, axis=1)
         print("---Combined classifier---\nDev Results:")
         print_score(dev['labels'], dev_predict)
@@ -98,51 +98,51 @@ def dev_test_predict(clf, dev, test, text=True):
     print_score(test['labels'], test_pred)
 
 
-def find_optimal_weight(combined_probs, labels, c):
+def find_optimal_weight(combined_probability, labels):
     """ Finds optimal weights for combining classifiers
 
-    :param combined_probs: probabilties of data based on text and vector classifiers
+    :param combined_probability: probabilities of data based on text and vector classifiers
     :param labels: labels for a portion of the data set
-    :param c: Config object that contains parameter settings
-    :return:
+    :return: probabilities of best weighting, labels from best weighting, optimal weights
     """
     weights = list()
-    for w in np.linspace(*c.range, c.num_steps):
-        avg = np.average(combined_probs, axis=0, weights=[w, c.range[-1] - w])
+    for w in np.linspace(*CONFIG.range, CONFIG.num_steps):
+        avg = np.average(combined_probability, axis=0, weights=[w, CONFIG.range[-1] - w])
         predict = np.argmax(avg, axis=1)
         weights.append((avg, predict, w, metrics.f1_score(labels, predict, pos_label=1)))
     combine_avg, combine_predict, optimal_weight, score = max(weights, key=lambda x: x[-1])
-    if c.verbosity:
-        print('Optimal weights (dev-based):\nText clf:', optimal_weight, '\nVector clf:', c.range[-1] - optimal_weight)
+    if CONFIG.verbose:
+        print('Optimal weights (dev-based):\nText clf:', optimal_weight, '\nVector clf:',
+              CONFIG.range[-1] - optimal_weight)
     return combine_avg, combine_predict, optimal_weight
 
 
-def get_data(c):
+def get_data():
     """ Retrieves data sets.
 
-    :param c: Config object containing folder and file locations
     :return: Three data sets, each made of text data, sentence vectors, and labels
     """
     train, dev, test = dict(), dict(), dict()
-    _, _, train['text'], train['labels'] = process_tokens(c.training_data_folder)
-    _, _, dev['text'], dev['labels'] = process_tokens(c.dev_data_folder)
-    _, _, test['text'], test['labels'] = process_tokens(c.test_data_folder)
-    train['vecs'], dev['vecs'], test['vecs'] = get_vecs(c)
+    train['text'] = read_msgpack(CONFIG.train_sent_text)
+    train['labels'] = read_msgpack(CONFIG.train_sent_labels)
+    dev['text'] = read_msgpack(CONFIG.dev_sent_text)
+    dev['labels'] = read_msgpack(CONFIG.dev_sent_labels)
+    test['text'] = read_msgpack(CONFIG.test_sent_text)
+    test['labels'] = read_msgpack(CONFIG.test_sent_labels)
+    train['vecs'], dev['vecs'], test['vecs'] = get_vec()
     return train, dev, test
 
 
-def get_vecs(c):
-    """ Loads sentence vectors from file
+def get_vec():
+    """ Loads sentence vectors from file.
 
-    :param c: Config object containing file locations
-    :return:
+    :return: list of sentence vectors for train, dev, and test
     """
-    vecs = list()
-    for vec_file in [c.training_sent_vecs, c.dev_sent_vecs, c.test_sent_vecs]:
-        with open(vec_file, 'rb') as vec:
-            vec = msgpack.unpack(vec)
-            vecs.append(str2float(vec))
-    return vecs
+    vec_list = list()
+    for vec_file in [CONFIG.train_sent_vec, CONFIG.dev_sent_vec, CONFIG.test_sent_vec]:
+        vec = read_msgpack(vec_file)
+        vec_list.append(str2float(vec))
+    return vec_list
 
 
 def print_score(true_labels, pred_labels):
@@ -155,15 +155,15 @@ def print_score(true_labels, pred_labels):
     print(metrics.classification_report(true_labels, pred_labels, digits=3))
 
 
-def train_text_clf(train, dev, c):
+def train_text_clf(train, dev):
     """ Trains a classifier based on text data
 
     :param train: training set
     :param dev: dev set
-    :param c: Config object containing parameters
     :return: classifier trained on text data
     """
-    if not c.sent_text_parameter_search:
+    if not CONFIG.sent_text_parameter_search:
+
         # p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 2), min_df=2, max_df=.85)),
         #               ('tfidf', TfidfTransformer(sublinear_tf=True)),
         #               ('svd', TruncatedSVD(n_components=300)),
@@ -172,7 +172,6 @@ def train_text_clf(train, dev, c):
         #               ])
         p = Pipeline([('vect', CountVectorizer(ngram_range=(1, 3), min_df=10, max_df=.9, lowercase=False)),
                       ('tfidf', TfidfTransformer(sublinear_tf=True)),
-                      #('svd', TruncatedSVD(n_components=500)),
                       ('clf', SGDClassifier(loss='log', penalty='l2', alpha=1e-04, max_iter=1900, class_weight={1: .9},
                                             average=True))
                       ])
@@ -232,15 +231,14 @@ def train_text_clf(train, dev, c):
         return gs_clf
 
 
-def train_vec_clf(train, dev, c):
-    """ Trains a classifier based on sentence vectors
+def train_vec_clf(train, dev):
+    """ Trains a classifier based on sentence vectors.
 
     :param train: training set
     :param dev: dev set
-    :param c: Config object containing parameters
     :return: classifier trained on sentence vectors
     """
-    if not c.sent_vec_parameter_search:
+    if not CONFIG.sent_vec_parameter_search:
         v = SGDClassifier(loss='log', penalty='elasticnet', max_iter=1000, l1_ratio=.65)
         v.fit(train['vecs'], train['labels'])
         return v
@@ -253,7 +251,6 @@ def train_vec_clf(train, dev, c):
             # 'clf__alpha': (.0001, .0005, .005, .00001, .00005),
             # 'clf__loss': ('log', 'perceptron'),
             # 'clf__penalty': ('elasticnet', 'l2', 'l1'),
-            # 'clf__warm_start': (True, False)
             'clf__l1_ratio': (.10, .15, .20, .25, .30, .45, .5, .55, .60, .65, .70, .75)
         }
         gs_clf = GridSearchCV(p, parameters, scoring='f1', cv=predefined_split, n_jobs=-1)
@@ -264,36 +261,55 @@ def train_vec_clf(train, dev, c):
         return gs_clf
 
 
-def write_sent_prob(train, dev, test, c):
+def write_sent_prob(train, dev, test, test_comb):
     """ Writes a classifiers sentence level prediction probabilities to file to use as feature in NER.
 
     :param train: predictions for training set if precomputed else training set
     :param dev: predictions for dev set if precomputed else dev set
     :param test: predictions for test set if precomputed else test set
-    :param c: Config object with file locations
+    :param test_comb: predictions for test set from single .in file
     """
-    for predictions, prediction_file in zip([train, dev, test], [c.training_predict, c.dev_predict, c.test_predict]):
-        with open(prediction_file, 'wb') as sent_predict:
-            msgpack.pack(predictions[:, 0], sent_predict)
+    for predictions, prediction_file in zip([train, dev, test, test_comb],
+                                            [CONFIG.train_predict, CONFIG.dev_predict,
+                                             CONFIG.test_predict, CONFIG.test_comb_predict]):
+        write_msgpack(predictions[:, 0], prediction_file)
+
+
+def write_test_results(predicted, out_file):
+    """Writes results for predictions made on combined .in test file.
+
+    :param predicted: labels predicted
+    :param out_file: name of the file to be written to
+    :return:
+    """
+    with open(out_file, 'w') as f:
+        for label in predicted:
+            f.write("%s\n" % label)
 
 
 def main():
-    c = Config()
-    train, dev, test = get_data(c)
-    text_clf = train_text_clf(train, dev, c)
-    vec_clf = train_vec_clf(train, dev, c)
+    train, dev, test = get_data()
+    text_clf = train_text_clf(train, dev)
+    vec_clf = train_vec_clf(train, dev)
 
     print('---Text classifier---')
     dev_test_predict(text_clf, dev, test)
     print('---Vector classifier---')
     dev_test_predict(vec_clf, dev, test, text=False)
 
-    if c.sent_combine_models:
-        train_prob, dev_prob, test_prob = combined_predict(text_clf, vec_clf, train, dev, test, c)
+    if CONFIG.sent_combine_models:
+        train_prob, dev_prob, test_prob = combined_predict(text_clf, vec_clf, train, dev, test)
     else:
         train_prob, dev_prob, test_prob = map(text_clf.predict_proba, [train['text'], dev['text'], test['text']])
-    if c.write_probs:
-        write_sent_prob(train_prob, dev_prob, test_prob, c)
+
+    test_combined = read_msgpack(CONFIG.task_1_comb)
+    test_combined_prob = text_clf.predict_proba(test_combined)
+
+    if CONFIG.write_sent_prob:
+        write_sent_prob(train_prob, dev_prob, test_prob, test_combined_prob)
+
+    if CONFIG.write_test_results:
+        write_test_results(text_clf.predict(test_combined), CONFIG.task1_out)
 
 
 if __name__ == '__main__':
